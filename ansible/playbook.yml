@@ -1,0 +1,116 @@
+---
+- name: Harden nodes and join the tailnet
+  hosts: all
+  become: true
+
+  vars:
+    admin_user: opsadmin
+    admin_pubkey_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
+    # If this host still serves Postgres on 5432 for DBeaver, set this to your LAN CIDR, so the default-deny below doesn't cut that connection.
+    lan_postgres_cidr: "192.168.1.23/24"
+
+  tasks:
+    # Baseline user 
+    - name: Ensure the admin user exists with sudo rights
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        groups: sudo
+        shell: /bin/bash
+        append: true
+        create_home: true
+
+    - name: Let the admin user sudo without a password prompt
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/90-{{ admin_user }}"
+        content: "{{ admin_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    - name: Install the admin user's SSH public key
+      ansible.posix.authorized_key:
+        user: "{{ admin_user }}"
+        state: present
+        key: "{{ lookup('file', admin_pubkey_file) }}"
+
+    # SSH hardening 
+    - name: Lock down sshd — key-only auth, no root login
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+        validate: "/usr/sbin/sshd -t -f %s"
+      loop:
+        - { regexp: "^#?PermitRootLogin", line: "PermitRootLogin no" }
+        - { regexp: "^#?PasswordAuthentication", line: "PasswordAuthentication no" }
+        - { regexp: "^#?KbdInteractiveAuthentication", line: "KbdInteractiveAuthentication no" }
+      notify: restart sshd
+
+    # Automatic security patching
+    - name: Install unattended-upgrades
+      ansible.builtin.apt:
+        name: unattended-upgrades
+        state: present
+        update_cache: true
+
+    - name: Enable the daily update/upgrade timers
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    # Host firewall
+    - name: Allow SSH through ufw
+      community.general.ufw:
+        rule: allow
+        name: OpenSSH
+
+    - name: Allow all traffic on the tailscale interface
+      community.general.ufw:
+        rule: allow
+        interface: tailscale0
+        direction: in
+
+    - name: Preserve existing DBeaver-over-LAN access to Postgres, if any
+      community.general.ufw:
+        rule: allow
+        port: "5432"
+        proto: tcp
+        src: "{{ lan_postgres_cidr }}"
+      when: lan_postgres_cidr | length > 0
+
+    - name: Set default deny on incoming, then enable ufw
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+    # Tailscale
+    - name: Install Tailscale
+      ansible.builtin.shell: curl -fsSL https://tailscale.com/install.sh | sh
+      args:
+        creates: /usr/sbin/tailscaled
+
+    - name: Join the tailnet
+      ansible.builtin.command: >
+        tailscale up
+        --authkey={{ tailscale_authkey }}
+        --hostname={{ inventory_hostname }}
+        --ssh
+      register: ts_up
+      changed_when: true
+
+    - name: Report this node's Tailscale IP
+      ansible.builtin.command: tailscale ip -4
+      register: ts_ip
+      changed_when: false
+
+    - name: Show the Tailscale IP
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} is now reachable at {{ ts_ip.stdout }} on the tailnet"
+
+  handlers:
+    - name: restart sshd
+      ansible.builtin.service:
+        name: ssh
+        state: restarted
