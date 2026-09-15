@@ -6,8 +6,7 @@
   vars:
     admin_user: opsadmin
     admin_pubkey_file: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
-    # If this host still serves Postgres on 5432 for DBeaver, set this to your LAN CIDR, so the default-deny below doesn't cut that connection.
-    lan_postgres_cidr: "192.168.1.23/24"
+    lan_postgres_cidr: "192.168.1.0/24"
 
   tasks:
     # Baseline user 
@@ -71,7 +70,7 @@
         interface: tailscale0
         direction: in
 
-    - name: Preserve existing DBeaver-over-LAN access to Postgres, if any
+    - name: Preserve existing DBeaver-over-LAN access to Postgres
       community.general.ufw:
         rule: allow
         port: "5432"

@@ -10,6 +10,9 @@ terraform/*.tfstate.*
 terraform/terraform.tfvars
 terraform/azure_motorsport
 
+#Ansible
+inventory.ini
+
 # Python
 __pycache__/
 *.pyc

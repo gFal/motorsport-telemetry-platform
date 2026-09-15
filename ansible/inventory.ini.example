@@ -2,7 +2,7 @@
 ubuntu-server ansible_connection=local
 
 [azure_agent]
-motorsport-agent ansible_host=4.223.116.148 ansible_user=azureuser ansible_ssh_private_key_file=~/.ssh/azure_motorsport
+motorsport-agent ansible_host=<azure-vm-public-IP> ansible_user=azureuser ansible_ssh_private_key_file=~/.ssh/azure_motorsport
 
 [all:vars]
 ansible_python_interpreter=/usr/bin/python3
