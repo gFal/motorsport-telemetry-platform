@@ -1,8 +1,6 @@
 """
 Polls every POLL_INTERVAL_SECONDS, writes new alerts to the DB and log file.
-
 This is a standalone process — separate from FastAPI, with its own DB pool.
-That separation means: different failure domain, different restart policy, independently scalable when this moves to Kubernetes.
 """
 
 import asyncio

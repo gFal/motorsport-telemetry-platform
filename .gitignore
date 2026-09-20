@@ -21,3 +21,6 @@ venv/
 
 # Logs
 *.log
+
+#Kubernetes
+k3s/postgres-secret.yaml

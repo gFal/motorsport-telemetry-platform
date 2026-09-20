@@ -1,3 +1,7 @@
+"""
+Structured JSON-lines logging. One JSON object per line, one line per alert.
+"""
+
 import json
 from datetime import datetime
 import config

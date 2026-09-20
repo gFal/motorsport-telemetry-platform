@@ -2,7 +2,6 @@
 SILENT: no reading from a sensor in the last 60s.
 OUT_OF_RANGE: engine temp > 120C, tyre pressure < 19 PSI, fuel load < 0L.
 De-duplication: each alert fires once on transition INTO the bad state.
-If the condition clears and re-triggers, that's a new alert.
 """
 
 from datetime import datetime

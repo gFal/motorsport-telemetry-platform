@@ -1,6 +1,5 @@
 """
-Async PostgreSQL connection pool and queries for the anomaly service.
-Separate from the FastAPI db layer — this is an independent process with its own pool, its own connection lifecycle, and its own failure mode.
+Async PostgreSQL connection pool and queries for the anomaly service. Separate from the FastAPI db layer.
 """
 
 import asyncpg

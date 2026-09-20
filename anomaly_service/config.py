@@ -1,6 +1,5 @@
 """
 All configuration via environment variables with local-dev defaults.
-When this moves to Kubernetes, only the env vars in the Deployment manifest change — no code changes needed.
 """
 
 import os
