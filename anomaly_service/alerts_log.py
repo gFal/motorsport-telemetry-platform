@@ -1,8 +1,3 @@
-"""
-Structured JSON-lines logging. One JSON object per line, one line per alert.
-JSON-lines is directly machine-parseable and compatible with log aggregators when this moves to Kubernetes.
-"""
-
 import json
 from datetime import datetime
 import config
