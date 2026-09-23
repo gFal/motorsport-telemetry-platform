@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 5.0"
     }
+    http = {
+      source = "hashicorp/http"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -17,6 +21,10 @@ provider "azurerm" {
   }
 
   resource_provider_registrations = "none"
+}
+
+data "http" "my_ip" {
+  url = "https://api.ipify.org"
 }
 
 resource "azurerm_resource_group" "motorsport" {
@@ -59,7 +67,7 @@ resource "azurerm_network_security_group" "agent" {
     protocol                   = "Tcp"
     source_port_range          = "*"
     destination_port_range     = "22"
-    source_address_prefix      = var.my_ip_cidr
+    source_address_prefix      = "${chomp(data.http.my_ip.response_body)}/32"
     destination_address_prefix = "*"
   }
 

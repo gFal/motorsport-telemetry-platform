@@ -33,8 +33,3 @@ variable "ssh_public_key_path" {
   type        = string
   default     = "~/.ssh/azure_motorsport.pub"
 }
-
-variable "my_ip_cidr" {
-  description = "Current public IP in CIDR form."
-  type        = string
-}
