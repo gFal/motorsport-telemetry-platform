@@ -1,13 +1,7 @@
 variable "resource_group_name" {
-  description = "VM resource group."
+  description = "Existing resource group."
   type        = string
   default     = "motorsport"
-}
-
-variable "location" {
-  description = "Azure region for all resources."
-  type        = string
-  default     = "swedencentral"
 }
 
 variable "vm_name" {
@@ -28,8 +22,13 @@ variable "admin_username" {
   default     = "azureuser"
 }
 
-variable "ssh_public_key_path" {
-  description = "Path to local SSH public key."
+variable "admin_ssh_public_key" {
+  description = "Contents of ~/.ssh/azure_motorsport.pub (a public key, not a path)."
   type        = string
-  default     = "~/.ssh/azure_motorsport.pub"
+}
+
+variable "ssh_allowed_cidr" {
+  description = "Source CIDR allowed to SSH to the agent, e.g. home IP as x.x.x.x/32."
+  type        = string
+  sensitive   = true # keeps home IP out of public PR plan logs
 }

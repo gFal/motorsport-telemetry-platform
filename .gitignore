@@ -3,24 +3,36 @@
 *.env
 !.env.example
 
+# SSH private keys
+terraform/azure_motorsport
+*.pem
+id_rsa
+id_ed25519
+
 # Terraform
 terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/terraform.tfvars
-terraform/azure_motorsport
+terraform/.terraform.tfstate.lock.info
+terraform/*.tfvars
+terraform/*.auto.tfvars
+terraform/tfplan
+terraform/plan.json
+terraform/crash.log
 
 #Ansible
 inventory.ini
+
+#Kubernetes
+k3s/*secret*.yaml
 
 # Python
 __pycache__/
 *.pyc
 .venv/
 venv/
+.pytest_cache/
 
 # Logs
 *.log
-
-#Kubernetes
-k3s/postgres-secret.yaml
