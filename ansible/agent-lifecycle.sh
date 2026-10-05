@@ -1,3 +1,7 @@
+#!/usr/bin/env bash
+# agent-lifecycle.sh --> bring the Azure k3s agent up/down on demand.
+# up: refresh home IP --> terraform apply --> Ansible hardening + Tailscale --> k3s join
+# down: drop k3s node object --> terraform destroy (VM + networking only, the rg and the Terraform state storage are not managed by Terraform)
 set -euo pipefail
 
 TF_DIR="$HOME/motorsport/terraform"
@@ -6,8 +10,50 @@ TF_OUTPUT_IP="agent_public_ip"
 AZURE_SSH_USER="azureuser"
 AZURE_SSH_KEY="$HOME/.ssh/azure_motorsport"
 AGENT_NODE_NAME="motorsport-agent"
+GH_REPO="gFal/motorsport-telemetry-platform"  # keeping the CI TFVARS secret in sync
+TF_LOCK_TIMEOUT="5m"                          # wait (don't fail) if a CI apply holds the state lock
+
+# Replaces `data "http" "my_ip"` lookup in main.tf.
+# Detects the current home public IP and writes it into terraform.tfvars.
+# If it changed, it also re-uploads terraform.tfvars as the TFVARS secret, so CI
+# plans/applies use the same value and never propose changing the SSH rule.
+refresh_home_ip() {
+  local tfvars="$TF_DIR/terraform.tfvars"
+  local current
+
+  current="$(curl -fsS --max-time 10 https://api.ipify.org)/32" \
+    || { echo "!! could not detect the public IP (api.ipify.org)"; return 1; }
+
+  if grep -q "^ssh_allowed_cidr *= *\"${current}\"" "$tfvars"; then
+    echo "    home IP unchanged (${current})"
+    return 0
+  fi
+
+  echo "    home IP is now ${current} — updating terraform.tfvars"
+  if grep -q '^ssh_allowed_cidr' "$tfvars"; then
+    sed -i "s|^ssh_allowed_cidr.*|ssh_allowed_cidr     = \"${current}\"|" "$tfvars"
+  else
+    echo "ssh_allowed_cidr     = \"${current}\"" >> "$tfvars"
+  fi
+
+  # A stale CI secret must not stop a local bring-up, but it must be visible.
+  if gh secret set TFVARS --repo "$GH_REPO" < "$tfvars" >/dev/null 2>&1; then
+    echo "    TFVARS secret updated in $GH_REPO"
+  else
+    echo "!! WARNING: could not update the TFVARS secret (gh not logged in?)."
+    echo "!!          CI will use the old IP until you run:"
+    echo "!!          gh secret set TFVARS --repo $GH_REPO < $tfvars"
+  fi
+}
 
 up() {
+  # Fail before creating anything billable: previously this was only checked after
+  # terraform apply, which could leave a VM running but never joined.
+  : "${TAILSCALE_AUTHKEY_AGENT:?set TAILSCALE_AUTHKEY_AGENT first}"
+
+  echo "==> refreshing home IP for the NSG SSH rule"
+  refresh_home_ip
+  
   echo "==> terraform apply"
   (cd "$TF_DIR" && terraform apply -parallelism=1 -auto-approve)
   AZURE_IP=$(cd "$TF_DIR" && terraform output -raw "$TF_OUTPUT_IP")
@@ -51,7 +97,7 @@ down() {
   sudo k3s kubectl delete node "$AGENT_NODE_NAME" --ignore-not-found || true
 
   echo "==> terraform destroy"
-  (cd "$TF_DIR" && terraform destroy -auto-approve)
+  (cd "$TF_DIR" && terraform destroy -lock-timeout="$TF_LOCK_TIMEOUT" -auto-approve)
 
   echo "==> done. The ephemeral Tailscale key means the tailnet entry drops on its own once it's offline."
 }
