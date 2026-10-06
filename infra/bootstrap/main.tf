@@ -46,14 +46,14 @@ locals {
 
   identities = {
     plan = {
-      display_name = "motorsport-ci-plan"
+      display_name = "motorsport-gha-plan"
       fic_name     = "plan-pull-request"
       subject      = "repo:${var.oidc_repo}:pull_request"
       rg_role      = "Reader"
       state_role   = "Storage Blob Data Reader"
     }
     apply = {
-      display_name = "motorsport-ci-apply"
+      display_name = "motorsport-gha-apply"
       fic_name     = "apply-production-env"
       subject      = "repo:${var.oidc_repo}:environment:production"
       rg_role      = "Contributor"
