@@ -10,16 +10,16 @@ id_rsa
 id_ed25519
 
 # Terraform
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.*
-terraform/terraform.tfvars
-terraform/.terraform.tfstate.lock.info
-terraform/*.tfvars
-terraform/*.auto.tfvars
-terraform/tfplan
-terraform/plan.json
-terraform/crash.log
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+*.tfvars
+*.auto.tfvars
+!*.tfvars.example
+tfplan
+plan.json
+crash.log
 
 #Ansible
 inventory.ini
