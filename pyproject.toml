@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+pythonpath = ["tests/e2e"]
+timeout = 600
+markers = [
+    "manual: destructive host-level test, excluded from automated runs",
+    "needs_simulator: requires remote control of the telemetry simulator",
+]

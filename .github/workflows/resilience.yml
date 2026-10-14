@@ -1,0 +1,96 @@
+# Resilience testing for the motorsport telemetry platform.
+
+# Runs the chaos suite against the live cluster on a daily schedule and on manual dispatch. 
+# Tests are destructive and never run on pull requests or as part of a deployment.
+name: resilience
+
+on:
+  schedule:
+    - cron: "02 16 * * 1-5"       #  Mon-Fri, 16:02 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read                   # required by the stale-run guard to read the run's creation time
+
+jobs:
+  chaos:
+    runs-on: [self-hosted, linux, motorsport-server]
+    timeout-minutes: 30
+    concurrency:
+      group: motorsport-cluster   # shared with deploy-and-verify - no chaos run during a deployment
+      cancel-in-progress: false
+    env:                           
+      K8S_NAMESPACE: default
+      API_DEPLOYMENT: motorsport-api
+      API_SERVICE: motorsport-api
+      ANOMALY_DEPLOYMENT: motorsport-anomaly
+      POSTGRES_DEPLOYMENT: postgres
+      POSTGRES_SECRET: postgres-secret
+      POSTGRES_SECRET_KEY: DB_PASSWORD
+      DB_NAME: motorsport
+      DB_USER: pitwall
+      DB_PROBE_PATH: /cars/1/latest
+      CANARY_CAR_ID: "1"
+      ANOMALY_POLL_SECONDS: "30"
+      MAX_QUEUE_SECONDS: "7200"    # skip scheduled runs queued for more than two hours
+    steps:
+      # Skip scheduled runs that waited for the runner while the server was offline, suite does not start immediately on server boot.
+      - name: Stale scheduled run guard
+        id: guard
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.api_url }}/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          created=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$RUN_URL" | jq -r .created_at)
+          age=$(( $(date +%s) - $(date -d "$created" +%s) ))
+          echo "Run was queued ${age}s ago."
+          if [ "$age" -gt "$MAX_QUEUE_SECONDS" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Scheduled run waited ${age}s for the runner (server was off) - chaos tests skipped."
+          fi
+
+      - uses: actions/checkout@v6
+        if: steps.guard.outputs.skip != 'true'
+
+      - name: Cluster topology for the record
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          kubectl get nodes -o wide
+          echo "Ready nodes: $(kubectl get nodes --no-headers | grep -c ' Ready')"
+
+      - name: Test environment
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet -r tests/e2e/requirements.txt
+
+      - name: Chaos tests
+        if: steps.guard.outputs.skip != 'true'
+        run: >
+          .venv/bin/python -m pytest tests/e2e/chaos -v
+          -m "not manual and not needs_simulator"
+          --junitxml=reports/chaos.xml
+
+      - name: Upload report
+        if: always() && steps.guard.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: chaos-report
+          path: reports/
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$K8S_NAMESPACE" get pods -o wide
+          kubectl -n "$K8S_NAMESPACE" get events --sort-by=.lastTimestamp | tail -n 40
+
+      - name: Open an issue on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "${{ github.repository }}" \
+            --title "Resilience run failed: $(date -u +%F)" \
+            --body "Chaos suite failed. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

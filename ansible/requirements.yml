@@ -1,0 +1,4 @@
+# Collections the playbooks need - installed by CI before ansible-lint runs.
+collections:
+  - name: ansible.posix          # authorized_key
+  - name: community.general      # ufw

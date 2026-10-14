@@ -9,7 +9,7 @@
     lan_postgres_cidr: "192.168.1.0/24"
 
   tasks:
-    # Baseline user 
+    # Baseline user
     - name: Ensure the admin user exists with sudo rights
       ansible.builtin.user:
         name: "{{ admin_user }}"
@@ -31,7 +31,7 @@
         state: present
         key: "{{ lookup('file', admin_pubkey_file) }}"
 
-    # SSH hardening 
+    # SSH hardening
     - name: Lock down sshd — key-only auth, no root login
       ansible.builtin.lineinfile:
         path: /etc/ssh/sshd_config
@@ -42,7 +42,7 @@
         - { regexp: "^#?PermitRootLogin", line: "PermitRootLogin no" }
         - { regexp: "^#?PasswordAuthentication", line: "PasswordAuthentication no" }
         - { regexp: "^#?KbdInteractiveAuthentication", line: "KbdInteractiveAuthentication no" }
-      notify: restart sshd
+      notify: Restart sshd
 
     # Automatic security patching
     - name: Install unattended-upgrades
@@ -54,6 +54,7 @@
     - name: Enable the daily update/upgrade timers
       ansible.builtin.copy:
         dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
         content: |
           APT::Periodic::Update-Package-Lists "1";
           APT::Periodic::Unattended-Upgrade "1";
@@ -85,10 +86,23 @@
         direction: incoming
 
     # Tailscale
+    - name: Check whether Tailscale is already installed
+      ansible.builtin.stat:
+        path: /usr/sbin/tailscaled
+      register: tailscaled_bin
+
+    - name: Download the Tailscale install script
+      ansible.builtin.get_url:
+        url: https://tailscale.com/install.sh
+        dest: /tmp/tailscale-install.sh
+        mode: "0755"
+      when: not tailscaled_bin.stat.exists
+
     - name: Install Tailscale
-      ansible.builtin.shell: curl -fsSL https://tailscale.com/install.sh | sh
+      ansible.builtin.command: /tmp/tailscale-install.sh
       args:
         creates: /usr/sbin/tailscaled
+      when: not tailscaled_bin.stat.exists
 
     - name: Join the tailnet
       ansible.builtin.command: >
@@ -98,6 +112,7 @@
         --ssh
       register: ts_up
       changed_when: true
+      no_log: true   # keeps the auth key out of logs
 
     - name: Report this node's Tailscale IP
       ansible.builtin.command: tailscale ip -4
@@ -109,7 +124,7 @@
         msg: "{{ inventory_hostname }} is now reachable at {{ ts_ip.stdout }} on the tailnet"
 
   handlers:
-    - name: restart sshd
+    - name: Restart sshd
       ansible.builtin.service:
         name: ssh
         state: restarted
