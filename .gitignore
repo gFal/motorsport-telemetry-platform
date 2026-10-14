@@ -36,3 +36,8 @@ venv/
 
 # Logs
 *.log
+
+# Test reports and caches
+reports/
+.pytest_cache/
+.venv*/

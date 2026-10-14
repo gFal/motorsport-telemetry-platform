@@ -1,0 +1,267 @@
+# CI/CD pipeline for the motorsport telemetry platform.
+
+# Pull requests: static infrastructure checks and unit tests.
+# Push to main: deploy manifests to the cluster and run smoke tests.
+# Manual dispatch: apply Terraform changes after environment approval.
+name: motorsport-pipeline
+
+on:
+  pull_request:
+    branches: 
+      - main
+  push:
+    branches: 
+      - main
+  workflow_dispatch:            
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.16.1"          
+  TF_DIR: infra/agent
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  # Infrastructure validation: formatting, Terraform plan, Ansible lint, manifest schemas.
+  plan-and-lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform -chdir="$TF_DIR" fmt -check -recursive -diff
+
+      - name: terraform validate (no backend, no credentials)
+        run: |
+          terraform -chdir="$TF_DIR" init -backend=false
+          terraform -chdir="$TF_DIR" validate
+
+      - name: Write tfvars from secret
+        if: env.SAME_REPO == 'true'
+        env:
+          TFVARS: ${{ secrets.TFVARS }}
+        run: printf '%s\n' "$TFVARS" > "$TF_DIR/ci.auto.tfvars"
+
+      - name: terraform plan (Reader identity, no state lock)
+        if: env.SAME_REPO == 'true'
+        run: |
+          terraform -chdir="$TF_DIR" init -reconfigure
+          terraform -chdir="$TF_DIR" plan -lock=false -out=tfplan
+          {
+            echo '### Terraform plan'
+            echo '```'
+            terraform -chdir="$TF_DIR" show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fork PR notice
+        if: env.SAME_REPO != 'true'
+        run: echo "::notice::PR from a fork - no Azure credentials; terraform plan skipped, static checks still ran."
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: ansible-lint
+        run: |
+          pip install --quiet ansible-lint
+          if [ -f ansible/requirements.yml ]; then
+            ansible-galaxy collection install -r ansible/requirements.yml
+          fi
+          ansible-lint ansible/
+
+      - name: kubeconform (manifest schema check)
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          ./kubeconform -strict -summary -ignore-missing-schemas k3s/
+
+      - name: e2e suite compiles
+        run: python -m compileall -q tests
+
+  # Unit tests, one job per service.
+  unit-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false                     # report results for every service
+      matrix:                              # matrix running the same job for both values
+        service: [api, anomaly_service]
+    env:                                   # dummy config for modules that read env vars at import time, never used to connect
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: motorsport
+      DB_USER: ci
+      DB_PASSWORD: ci
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"  
+          cache: pip
+          cache-dependency-path: |
+            ${{ matrix.service }}/requirements.txt
+            requirements-test.txt
+
+      - name: Install dependencies
+        run: pip install -r "${{ matrix.service }}/requirements.txt" -r requirements-test.txt
+
+      - name: pytest
+        working-directory: ${{ matrix.service }}
+        run: python -m pytest tests -v --junitxml="../reports/unit-${{ matrix.service }}.xml"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-${{ matrix.service }}
+          path: reports/
+
+  # Terraform apply: manual, approval-gated, refuses to create or destroy the agent VM.
+  terraform-apply:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    concurrency:
+      group: terraform-state
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_APPLY }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AGENT_VM_ADDRESS: azurerm_linux_virtual_machine.agent
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Write tfvars from secret
+        env:
+          TFVARS: ${{ secrets.TFVARS }}
+        run: printf '%s\n' "$TFVARS" > "$TF_DIR/ci.auto.tfvars"
+
+      - name: terraform init
+        run: terraform -chdir="$TF_DIR" init
+
+      - name: "Guard 1: the agent VM must already exist"
+        run: |
+          if ! terraform -chdir="$TF_DIR" state list | grep -qxF "$AGENT_VM_ADDRESS"; then
+            echo "::error::$AGENT_VM_ADDRESS is not in state - the agent is DOWN."
+            echo "::error::CI never creates the agent. Run agent-lifecycle.sh up on the server."
+            exit 1
+          fi
+
+      - name: terraform plan
+        run: |
+          terraform -chdir="$TF_DIR" plan -lock-timeout=5m -out=tfplan
+          {
+            echo '### Plan to be applied'
+            echo '```'
+            terraform -chdir="$TF_DIR" show -no-color tfplan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: "Guard 2: no deletes or replacements"
+        run: |
+          terraform -chdir="$TF_DIR" show -json tfplan > plan.json
+          BAD=$(jq -r '.resource_changes[]? | select(.change.actions | index("delete"))
+                       | "\(.address)  [\(.change.actions | join("/"))]"' plan.json)
+          if [ -n "$BAD" ]; then
+            echo "::error::Plan deletes or replaces resources. Refusing: a replaced VM is never re-joined."
+            echo "$BAD"
+            exit 1
+          fi
+
+      - name: terraform apply (exactly the saved plan)
+        run: terraform -chdir="$TF_DIR" apply -lock-timeout=5m tfplan
+
+  # Continuous deployment: apply manifests, wait for rollouts, run smoke tests.
+  deploy-and-verify:
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, linux, motorsport-server]
+    timeout-minutes: 20
+    concurrency:
+      group: motorsport-cluster   # shared with resilience.yml: no deploy during chaos runs
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:                          
+      K8S_NAMESPACE: default
+      API_DEPLOYMENT: motorsport-api
+      API_SERVICE: motorsport-api
+      ANOMALY_DEPLOYMENT: motorsport-anomaly
+      POSTGRES_DEPLOYMENT: postgres
+      POSTGRES_SECRET: postgres-secret
+      POSTGRES_SECRET_KEY: DB_PASSWORD
+      DB_NAME: motorsport
+      DB_USER: pitwall
+      DB_PROBE_PATH: /cars/1/latest
+      CANARY_CAR_ID: "1"
+      ANOMALY_POLL_SECONDS: "30"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Preflight
+        run: |
+          kubectl get nodes -o wide
+          kubectl -n "$K8S_NAMESPACE" get secret "$POSTGRES_SECRET" > /dev/null \
+            || { echo "::error::Secret $POSTGRES_SECRET is missing - it is created by hand, never from git."; exit 1; }
+
+      - name: Apply manifests
+        run: kubectl apply -f k3s/
+
+      - name: Wait for rollouts
+        run: |
+          for d in "$POSTGRES_DEPLOYMENT" "$API_DEPLOYMENT" "$ANOMALY_DEPLOYMENT"; do
+            kubectl -n "$K8S_NAMESPACE" rollout status "deploy/$d" --timeout=180s
+          done
+
+      - name: Test environment
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet -r tests/e2e/requirements.txt
+
+      - name: Smoke tests
+        run: .venv/bin/python -m pytest tests/e2e/smoke -v --junitxml=reports/smoke.xml
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-report
+          path: reports/
+
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n "$K8S_NAMESPACE" get pods -o wide
+          kubectl -n "$K8S_NAMESPACE" get events --sort-by=.lastTimestamp | tail -n 40
+          kubectl -n "$K8S_NAMESPACE" logs "deploy/$API_DEPLOYMENT" --tail=100 || true
+          kubectl -n "$K8S_NAMESPACE" logs "deploy/$ANOMALY_DEPLOYMENT" --tail=100 || true
