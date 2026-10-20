@@ -51,7 +51,7 @@ jobs:
             echo "::notice::Scheduled run waited ${age}s for the runner (server was off) - chaos tests skipped."
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: steps.guard.outputs.skip != 'true'
 
       - name: Cluster topology for the record

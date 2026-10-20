@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Ephemeral k3d cluster used by the integration job.
+resources:
+  - ../../base
+
+patches:
+ # Production pins Postgres to the on-premises node - the single k3d node has a different name.
+  - target:
+      kind: Deployment
+      name: postgres
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/nodeSelector
+
+images:
+  # Images built and scanned in the same pull request, imported into k3d.
+  # A non-latest tag defaults to imagePullPolicy IfNotPresent, so the imported image is used.
+  - name: ghcr.io/gfal/motorsport-api
+    newTag: ci
+  - name: ghcr.io/gfal/motorsport-anomaly     
+    newTag: ci
