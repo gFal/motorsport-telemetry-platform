@@ -39,7 +39,7 @@ jobs:
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: hashicorp/setup-terraform@v4
         with:
@@ -76,7 +76,7 @@ jobs:
         if: env.SAME_REPO != 'true'
         run: echo "::notice::PR from a fork - no Azure credentials; terraform plan skipped, static checks still ran."
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -88,10 +88,20 @@ jobs:
           fi
           ansible-lint ansible/
 
-      - name: kubeconform (manifest schema check)
+      - name: Render Kustomize overlays
+        run: |
+          mkdir -p rendered
+          for o in prod ci; do
+            kubectl kustomize "k3s/overlays/$o" > "rendered/$o.yaml"
+          done
+
+      - name: kubeconform (rendered overlays)
         run: |
           curl -fsSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
-          ./kubeconform -strict -summary -ignore-missing-schemas k3s/
+          for o in prod ci; do
+            echo "== $o"
+            ./kubeconform -strict -summary -ignore-missing-schemas "rendered/$o.yaml"
+          done
 
       - name: e2e suite compiles
         run: python -m compileall -q tests
@@ -112,9 +122,9 @@ jobs:
       DB_USER: ci
       DB_PASSWORD: ci
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"  
           cache: pip
@@ -155,7 +165,7 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AGENT_VM_ADDRESS: azurerm_linux_virtual_machine.agent
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: hashicorp/setup-terraform@v4
         with:
@@ -226,7 +236,7 @@ jobs:
       CANARY_CAR_ID: "1"
       ANOMALY_POLL_SECONDS: "30"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Preflight
         run: |
@@ -235,7 +245,7 @@ jobs:
             || { echo "::error::Secret $POSTGRES_SECRET is missing - it is created by hand, never from git."; exit 1; }
 
       - name: Apply manifests
-        run: kubectl apply -f k3s/
+        run: kubectl apply -k k3s/overlays/prod
 
       - name: Wait for rollouts
         run: |

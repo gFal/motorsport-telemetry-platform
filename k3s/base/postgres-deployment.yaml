@@ -34,6 +34,8 @@ spec:
           ports:
             - containerPort: 5432
           envFrom:
+            - configMapRef:
+                name: postgres-config
             - secretRef:
                 name: postgres-secret
           env:
@@ -42,6 +44,9 @@ spec:
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/data
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
           resources:
             requests:
               cpu: 250m
@@ -63,3 +68,6 @@ spec:
         - name: pgdata
           persistentVolumeClaim:
             claimName: postgres-pvc
+        - name: initdb
+          configMap:
+            name: postgres-initdb

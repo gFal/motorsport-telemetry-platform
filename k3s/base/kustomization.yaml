@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - postgres-deployment.yaml      
+  - postgres-service.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - anomaly-deployment.yaml
+
+configMapGenerator:
+  # Non-secret database connection settings shared by all workloads.
+  # The generated name includes a content hash, so a change rolls the dependent pods.
+  - name: postgres-config
+    literals:
+      - POSTGRES_DB=motorsport
+      - POSTGRES_USER=pitwall
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=motorsport
+      - DB_USER=pitwall
+
+  # Schema and seed data, executed by the Postgres entrypoint on an empty data directory only.
+  # Scripts run in lexical order of their keys.
+  - name: postgres-initdb
+    files:
+      - 01-schema.sql=db/schema.sql     
+      - 02-seed.sql=db/seed.sql
+    options:
+      disableNameSuffixHash: true       # schema edits must not restart Postgres - changing an existing database requires a migration 
