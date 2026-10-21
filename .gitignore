@@ -33,6 +33,7 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.venv*/.deploy.*/
 
 # Logs
 *.log
@@ -40,4 +41,3 @@ venv/
 # Test reports and caches
 reports/
 .pytest_cache/
-.venv*/

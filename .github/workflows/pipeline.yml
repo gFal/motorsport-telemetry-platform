@@ -22,6 +22,7 @@ env:
   TF_DIR: infra/agent
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
+  IMAGE_REGISTRY: ghcr.io/gfal
 
 jobs:
   # Infrastructure validation: formatting, Terraform plan, Ansible lint, manifest schemas.
@@ -146,6 +147,118 @@ jobs:
           name: unit-${{ matrix.service }}
           path: reports/
 
+  # Container image build and vulnerability scan, one job per service.
+  image-scan:
+    name: image-scan (${{ matrix.service }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # SARIF upload to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            image: motorsport-api
+          - service: anomaly_service
+            image: motorsport-anomaly
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.service }}
+          load: true  # load into the local Docker engine for scanning; never pushed from a pull request
+          push: false
+          tags: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Vulnerability gate (fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      # Report only - forks cannot write security events
+      - name: Vulnerability report (SARIF)
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        uses: aquasecurity/trivy-action@v0.36.0   
+        with:
+          image-ref: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+
+      - name: Upload SARIF to code scanning
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-${{ matrix.image }}
+
+  # Build each image once per merge, publish it under the commit SHA and provenance attestation.
+  publish-images:
+    name: publish-images (${{ matrix.service }})
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write                 # push to GHCR with GITHUB_TOKEN (no PAT)
+      id-token: write                 # Sigstore signing for the attestation
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            image: motorsport-api
+          - service: anomaly_service
+            image: motorsport-anomaly
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.service }}
+          push: true
+          tags: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
   # Terraform apply: manual, approval-gated, refuses to create or destroy the agent VM.
   terraform-apply:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
@@ -214,6 +327,7 @@ jobs:
 
   # Continuous deployment: apply manifests, wait for rollouts, run smoke tests.
   deploy-and-verify:
+    needs: publish-images
     if: github.event_name == 'push'
     runs-on: [self-hosted, linux, motorsport-server]
     timeout-minutes: 20
@@ -244,14 +358,9 @@ jobs:
           kubectl -n "$K8S_NAMESPACE" get secret "$POSTGRES_SECRET" > /dev/null \
             || { echo "::error::Secret $POSTGRES_SECRET is missing - it is created by hand, never from git."; exit 1; }
 
-      - name: Apply manifests
-        run: kubectl apply -k k3s/overlays/prod
-
-      - name: Wait for rollouts
-        run: |
-          for d in "$POSTGRES_DEPLOYMENT" "$API_DEPLOYMENT" "$ANOMALY_DEPLOYMENT"; do
-            kubectl -n "$K8S_NAMESPACE" rollout status "deploy/$d" --timeout=180s
-          done
+      - name: Deploy
+        id: deploy
+        run: scripts/deploy.sh apply "$GITHUB_SHA"
 
       - name: Test environment
         run: |
