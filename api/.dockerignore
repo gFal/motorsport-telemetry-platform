@@ -1,7 +1,15 @@
-__pycache__/
-*.pyc
-.venv/
+# Python bytecode and caches (any depth)
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Unit tests
+tests/
+
+# Local environments and secrets
+.venv*/
 venv/
 .env
 *.log
 .git/
+.dockerignore

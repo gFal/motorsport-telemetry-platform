@@ -23,7 +23,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: api
-          image: ghcr.io/gfal/motorsport-api:latest
+          image: ghcr.io/gfal/motorsport-api:unset
           ports:
             - containerPort: 8000
           envFrom:
