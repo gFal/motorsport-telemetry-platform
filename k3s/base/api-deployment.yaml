@@ -4,6 +4,13 @@ metadata:
   name: motorsport-api
 spec:
   replicas: 2
+  progressDeadlineSeconds: 180
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0  # existing pods keep serving until replacements are available
   selector:
     matchLabels:
       app: motorsport-api

@@ -362,25 +362,58 @@ jobs:
         id: deploy
         run: scripts/deploy.sh apply "$GITHUB_SHA"
 
-      - name: Test environment
+      - name: Install test dependencies 
         run: |
           python3 -m venv .venv
           .venv/bin/pip install --quiet -r tests/e2e/requirements.txt
 
       - name: Smoke tests
+        id: smoke
         run: .venv/bin/python -m pytest tests/e2e/smoke -v --junitxml=reports/smoke.xml
 
-      - name: Upload report
+      - name: Record known-good version
+        run: scripts/deploy.sh mark-good "$GITHUB_SHA"
+
+      - name: Upload smoke test report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: smoke-report
           path: reports/
 
-      - name: Diagnostics on failure
+      - name: Collect diagnostics
         if: failure()
         run: |
           kubectl -n "$K8S_NAMESPACE" get pods -o wide
           kubectl -n "$K8S_NAMESPACE" get events --sort-by=.lastTimestamp | tail -n 40
           kubectl -n "$K8S_NAMESPACE" logs "deploy/$API_DEPLOYMENT" --tail=100 || true
           kubectl -n "$K8S_NAMESPACE" logs "deploy/$ANOMALY_DEPLOYMENT" --tail=100 || true
+        
+      - name: Rollback to last known-good version
+        if: failure() && (steps.deploy.outcome == 'failure' || steps.smoke.outcome == 'failure')
+        run: |
+          LAST_GOOD=$(scripts/deploy.sh last-good)
+          if [ -z "$LAST_GOOD" ] || [ "$LAST_GOOD" = "$GITHUB_SHA" ]; then
+            echo "::error::No known-good version recorded - cannot roll back automatically."
+            exit 1
+          fi
+          echo "::warning::Verification of $GITHUB_SHA failed - rolling back to $LAST_GOOD"
+
+          git worktree prune
+          git fetch --no-tags --depth=1 origin "$LAST_GOOD"
+          WT="$RUNNER_TEMP/rollback-$LAST_GOOD"
+          git worktree add --force --detach "$WT" "$LAST_GOOD"
+
+          scripts/deploy.sh rollback "$LAST_GOOD" "$WT"
+
+          python3 -m venv "$RUNNER_TEMP/venv-rollback"
+          "$RUNNER_TEMP/venv-rollback/bin/pip" install --quiet -r "$WT/tests/e2e/requirements.txt"
+          (cd "$WT" && "$RUNNER_TEMP/venv-rollback/bin/python" -m pytest tests/e2e/smoke -v)
+
+          {
+            echo "### Automatic rollback"
+            echo "Deploy of \`$GITHUB_SHA\` failed verification."
+            echo "Rolled back to \`$LAST_GOOD\`; its smoke tests pass."
+            echo "**Next:** open a revert PR for \`$GITHUB_SHA\` so \`main\` matches the cluster again."
+          } >> "$GITHUB_STEP_SUMMARY"
+          git worktree remove --force "$WT"        
