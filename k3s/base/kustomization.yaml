@@ -27,4 +27,6 @@ configMapGenerator:
       - 01-schema.sql=db/schema.sql     
       - 02-seed.sql=db/seed.sql
     options:
-      disableNameSuffixHash: true       # schema edits must not restart Postgres - changing an existing database requires a migration 
+      disableNameSuffixHash: true       # schema edits must not restart Postgres - changing an existing database requires a migration
+      labels:
+        tier: database

@@ -4,6 +4,10 @@ metadata:
   name: motorsport-anomaly
 spec:
   replicas: 1
+  progressDeadlineSeconds: 120
+  minReadySeconds: 20    # no readiness probe - a pod must run this long to count as available
+  strategy:
+    type: Recreate       # alert de-duplication state is in memory - two concurrent detectors would duplicate alerts
   selector:
     matchLabels:
       app: motorsport-anomaly
