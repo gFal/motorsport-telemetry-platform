@@ -60,12 +60,12 @@ spec:
               memory: 512Mi
           readinessProbe:
             exec:
-              command: ["pg_isready", "-U", "pitwall", "-d", "motorsport"]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "pitwall", "-d", "motorsport"]
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             exec:
-              command: ["pg_isready", "-U", "pitwall", "-d", "motorsport"]
+              command: ["pg_isready", "-h", "127.0.0.1", "-U", "pitwall", "-d", "motorsport"]
             initialDelaySeconds: 15
             periodSeconds: 10
       volumes:

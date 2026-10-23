@@ -208,6 +208,119 @@ jobs:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}
 
+      - name: Save image for the integration job
+        run: docker save "${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:ci" -o "${{ matrix.image }}.tar"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.image }}
+          path: ${{ matrix.image }}.tar
+          retention-days: 1
+
+  # System test of the pull request's images in an ephemeral k3d cluster.
+  integration:
+    if: github.event_name == 'pull_request'
+    needs: image-scan     
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      K3S_IMAGE: rancher/k3s:v1.36.4-k3s1  
+      K3D_VERSION: v5.9.0
+      API_URL: http://localhost:30080  # API NodePort, mapped to the runner
+      K8S_NAMESPACE: default
+      API_DEPLOYMENT: motorsport-api
+      API_SERVICE: motorsport-api
+      ANOMALY_DEPLOYMENT: motorsport-anomaly
+      POSTGRES_DEPLOYMENT: postgres
+      POSTGRES_SECRET: postgres-secret
+      POSTGRES_SECRET_KEY: DB_PASSWORD
+      DB_NAME: motorsport
+      DB_USER: pitwall
+      DB_PROBE_PATH: /cars/1/latest
+      CANARY_CAR_ID: "1"
+      ANOMALY_POLL_SECONDS: "30"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download images
+        uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          merge-multiple: true
+          path: images
+
+      - name: Install k3d
+        run: curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/$K3D_VERSION/install.sh | TAG="$K3D_VERSION" bash
+
+      - name: Create cluster
+        run: |
+          k3d cluster create ci --image "$K3S_IMAGE" \
+            -p "30080:30080@server:0" \
+            --k3s-arg "--disable=traefik@server:0" \
+            --wait --timeout 180s
+          kubectl get nodes -o wide
+
+      - name: Import images
+        run: k3d image import images/*.tar -c ci
+
+      - name: Create database secret
+        run: |
+          PW=$(openssl rand -hex 16)
+          echo "::add-mask::$PW"
+          kubectl create secret generic "$POSTGRES_SECRET" \
+            --from-literal=POSTGRES_PASSWORD="$PW" --from-literal=DB_PASSWORD="$PW"
+
+      - name: Deploy
+        run: kubectl apply -k k3s/overlays/ci
+
+      - name: Wait for database initialisation and rollouts
+        run: |
+          kubectl rollout status "deploy/$POSTGRES_DEPLOYMENT" --timeout=180s
+          for i in $(seq 1 36); do
+            n=$(kubectl exec "deploy/$POSTGRES_DEPLOYMENT" -- psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT count(*) FROM sensors" 2>/dev/null || echo 0)
+            [ "${n:-0}" -gt 0 ] && break
+            sleep 5
+          done
+          [ "${n:-0}" -gt 0 ] || { echo "::error::Schema and seed data not loaded (no rows in sensors)."; exit 1; }
+          # Applications may be in crash-loop back-off from starting before the database; restart them to reset it.
+          kubectl rollout restart "deploy/$API_DEPLOYMENT" "deploy/$ANOMALY_DEPLOYMENT"
+          kubectl rollout status "deploy/$API_DEPLOYMENT" --timeout=180s
+          kubectl rollout status "deploy/$ANOMALY_DEPLOYMENT" --timeout=180s
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip install --quiet -r tests/e2e/requirements.txt
+
+      - name: Smoke tests
+        run: python -m pytest tests/e2e/smoke -v --junitxml=reports/integration-smoke.xml
+
+      - name: Chaos tests
+        run: >
+          python -m pytest tests/e2e/chaos -v
+          -m "not manual and not needs_simulator"
+          --junitxml=reports/integration-chaos.xml
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-reports
+          path: reports/
+          if-no-files-found: ignore
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl get events --sort-by=.lastTimestamp | tail -n 60
+          kubectl logs "deploy/$API_DEPLOYMENT" --tail=100 || true
+          kubectl logs "deploy/$ANOMALY_DEPLOYMENT" --tail=100 || true
+          kubectl logs "deploy/$POSTGRES_DEPLOYMENT" --tail=100 || true
+
   # Build each image once per merge, publish it under the commit SHA and provenance attestation.
   publish-images:
     name: publish-images (${{ matrix.service }})
