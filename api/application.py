@@ -1,13 +1,34 @@
+"""Motorsport Telemetry API.
+
+HTTP service that ingests race-car sensor readings and serves queries over them. Readings are stored in PostgreSQL through a shared asyncpg pool.
+
+Failure behaviour, by design:
+- Start-up connects to the database and fails if it cannot. A pod with a wrong password or no database never becomes Ready, so a bad rollout cannot replace working pods.
+- /health is a liveness check only and never touches the database. A database outage must not make Kubernetes restart healthy API processes.
+- Every database wait is bounded (database.DB_TIMEOUT_SECONDS). 
+  While PostgreSQL is unavailable, data endpoints answer 503 within seconds instead of hanging, and recover on their own once the database is back.
+"""
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException
-from database import close_pool, get_pool
+
+import asyncpg
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from database import DB_TIMEOUT_SECONDS, close_pool, get_pool
 from models import LatestReading, TelemetryPacket, TelemetryResponse
 
+logger = logging.getLogger("uvicorn.error")
 
+# Application lifecycle
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize and close the database connection pool."""
+    """Open the database pool at start-up and close it on shutdown.
+
+    If PostgreSQL is unreachable or rejects the credentials, get_pool() raises and the process exits: 
+    Kubernetes keeps the pod out of service instead of routing traffic to an API that cannot work.
+    """
     await get_pool()
     yield
     await close_pool()
@@ -21,14 +42,44 @@ app = FastAPI(
 )
 
 
+@asynccontextmanager
+async def db_connection():
+    """Borrow a connection from the shared pool for the duration of a block.
+
+    Waiting for a free connection is bounded by DB_TIMEOUT_SECONDS, so a pool exhausted by a slow or unavailable database fails fast (TimeoutError → 503).
+    """
+    pool = await get_pool()
+    async with pool.acquire(timeout=DB_TIMEOUT_SECONDS) as conn:
+        yield conn
+
+
+# Error handling
+@app.exception_handler(asyncpg.PostgresError)   # errors reported by PostgreSQL, incl. "starting up"
+@app.exception_handler(asyncpg.InterfaceError)  # connection lost or closed mid-request
+@app.exception_handler(OSError)                 # connection refused/reset while PostgreSQL is down
+@app.exception_handler(TimeoutError)            # connect, acquire or query exceeded the timeout
+async def database_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    """Report database failures as 503 Service Unavailable.
+
+    503 tells clients and monitoring that the failure is temporary and on the server side.
+    Retry-After suggests when to try again. The API holds no files or sockets other than its database connections, so OSError here means a database connection problem.
+    """
+    logger.warning("Database unavailable on %s %s: %r", request.method, request.url.path, exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "database unavailable"},
+        headers={"Retry-After": "5"},
+    )
+
+
+# Endpoints
 @app.get("/health")
 async def health():
-    """Return the service health status."""
-    pool = await get_pool()
+    """Liveness check: the process is running and serving HTTP.
 
-    async with pool.acquire() as conn:
-        await conn.fetchval("SELECT 1")
-
+    Deliberately does not query the database. 
+    If it did, a database outage would fail the liveness probe and Kubernetes would restart every API pod, turning a database incident into a full API outage.
+    """
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc),
@@ -37,18 +88,19 @@ async def health():
 
 @app.post("/telemetry", response_model=TelemetryResponse, status_code=201)
 async def ingest_telemetry(packet: TelemetryPacket):
-    """Ingest a sensor reading and return the stored record."""
-    pool = await get_pool()
+    """"Store one sensor reading and return the stored record.
 
-    async with pool.acquire() as conn:
+    Returns 404 if the sensor does not exist, 422 for an invalid payload (validated by TelemetryPacket) and 503 if the database is unavailable.
+    """
+    async with db_connection() as conn:
         sensor = await conn.fetchrow(
             "SELECT id FROM sensors WHERE id = $1",
             packet.sensor_id,
         )
 
         if sensor is None:
-            detail = f"Sensor {packet.sensor_id} not found"
-            raise HTTPException(status_code=404, detail=detail)
+            raise HTTPException(status_code=404, detail=f"Sensor {packet.sensor_id} not found")
+
 
         row = await conn.fetchrow(
             """
@@ -66,19 +118,21 @@ async def ingest_telemetry(packet: TelemetryPacket):
 
 @app.get("/cars/{car_id}/latest", response_model=list[LatestReading])
 async def latest_readings(car_id: int):
-    """Return the latest reading for every sensor channel on a car."""
-    pool = await get_pool()
-
-    async with pool.acquire() as conn:
+    """Return the latest reading for every sensor channel on a car.
+    
+    Returns 404 if the car doesn't exist and 503 if the database is unavailable.
+    """
+    async with db_connection() as conn:
         car = await conn.fetchrow(
             "SELECT id FROM cars WHERE id = $1",
             car_id,
         )
 
         if car is None:
-            detail = f"Car {car_id} not found"
-            raise HTTPException(status_code=404, detail=detail)
+            raise HTTPException(status_code=404, detail=f"Car {car_id} not found")
 
+        # DISTINCT ON keeps the first row per channel 
+        # ordering by recorded_at DESC makes that first row the latest reading.
         rows = await conn.fetch(
             """
             SELECT DISTINCT ON (s.channel_name)
@@ -98,16 +152,14 @@ async def latest_readings(car_id: int):
 
 @app.get("/telemetry/history", response_model=list[TelemetryResponse])
 async def telemetry_history(sensor_id: int, minutes: int = 5):
-    """Return recent readings for a sensor."""
+    """Return recent readings for a sensor.
+    
+    Returns 400 if `minutes` is outside 1-60 and 503 if the database is unavailable.
+    """
     if not 1 <= minutes <= 60:
-        raise HTTPException(
-            status_code=400,
-            detail="minutes must be between 1 and 60",
-        )
-
-    pool = await get_pool()
-
-    async with pool.acquire() as conn:
+        raise HTTPException(status_code=400, detail="minutes must be between 1 and 60")
+ 
+    async with db_connection() as conn:
         rows = await conn.fetch(
             """
             SELECT id, sensor_id, value, recorded_at
