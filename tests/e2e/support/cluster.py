@@ -115,3 +115,41 @@ class Cluster:
         """http://<ClusterIP>:<port> — routable from any cluster node, including the runner's."""
         svc = self.core.read_namespaced_service(name, self.ns)
         return f"http://{svc.spec.cluster_ip}:{svc.spec.ports[0].port}"
+
+    def create_or_replace_secret(self, name: str, data_b64: dict) -> None:
+        body = client.V1Secret(
+            metadata=client.V1ObjectMeta(name=name, labels={"purpose": "chaos-test"}),
+            type="Opaque", data=data_b64)
+        try:
+            self.core.create_namespaced_secret(self.ns, body)
+        except client.ApiException as exc:
+            if exc.status != 409:
+                raise
+            self.core.replace_namespaced_secret(name, self.ns, body)
+
+    def delete_secret(self, name: str) -> None:
+        try:
+            self.core.delete_namespaced_secret(name, self.ns)
+        except client.ApiException as exc:
+            if exc.status != 404:
+                raise
+
+    def swap_secret_ref(self, deployment: str, old: str, new: str) -> None:
+        """Replace every envFrom reference to Secret ``old`` with ``new``.
+
+        Changing the pod template starts a rollout of the Deployment.
+        """
+        d = self.apps.read_namespaced_deployment(deployment, self.ns)
+        to_dict = self.apps.api_client.sanitize_for_serialization
+        containers = []
+        for c in d.spec.template.spec.containers:
+            env_from = []
+            for src in c.env_from or []:
+                entry = to_dict(src)
+                if src.secret_ref and src.secret_ref.name == old:
+                    entry["secretRef"]["name"] = new
+                env_from.append(entry)
+            containers.append({"name": c.name, "envFrom": env_from})
+        # Strategic merge patch: containers merge by name - envFrom has no merge key and is replaced whole.
+        self.apps.patch_namespaced_deployment(
+            deployment, self.ns, {"spec": {"template": {"spec": {"containers": containers}}}})

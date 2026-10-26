@@ -1,0 +1,20 @@
+# External Secrets Operator Helm values.
+# Installed and upgraded manually with Helm - not deployed by the application pipeline.
+
+installCRDs: true
+
+# All components run on the on-premises server: the cloud agent node is ephemeral and the controller holds the Key Vault credential.
+nodeSelector:
+  kubernetes.io/hostname: ubuntu
+
+resources:
+  requests: { cpu: 10m, memory: 64Mi }
+  limits: { memory: 192Mi }
+
+webhook:
+  nodeSelector:
+    kubernetes.io/hostname: ubuntu
+
+certController:
+  nodeSelector:
+    kubernetes.io/hostname: ubuntu
