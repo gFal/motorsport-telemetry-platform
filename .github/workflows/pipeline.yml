@@ -34,7 +34,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+      CAN_PLAN: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
       ARM_USE_OIDC: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID_PLAN }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
@@ -59,13 +59,13 @@ jobs:
           done
 
       - name: Write tfvars from secret
-        if: env.SAME_REPO == 'true'
+        if: env.CAN_PLAN == 'true'
         env:
           TFVARS: ${{ secrets.TFVARS }}
         run: printf '%s\n' "$TFVARS" > "$TF_DIR/ci.auto.tfvars"
 
       - name: terraform plan (Reader identity, no state lock)
-        if: env.SAME_REPO == 'true'
+        if: env.CAN_PLAN == 'true'
         run: |
           terraform -chdir="$TF_DIR" init -reconfigure
           terraform -chdir="$TF_DIR" plan -lock=false -out=tfplan
@@ -77,7 +77,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fork PR notice
-        if: env.SAME_REPO != 'true'
+        if: env.CAN_PLAN != 'true'
         run: echo "::notice::PR from a fork - no Azure credentials; terraform plan skipped, static checks still ran."
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -197,7 +197,7 @@ jobs:
 
       # Report only - forks cannot write security events
       - name: Vulnerability report (SARIF)
-        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:ci
@@ -209,7 +209,7 @@ jobs:
           output: trivy-${{ matrix.image }}.sarif
 
       - name: Upload SARIF to code scanning
-        if: always() && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
@@ -456,7 +456,8 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-    env:                          
+    env:
+      GH_TOKEN: ${{ github.token }}                          
       K8S_NAMESPACE: default
       API_DEPLOYMENT: motorsport-api
       API_SERVICE: motorsport-api
@@ -471,6 +472,14 @@ jobs:
       ANOMALY_POLL_SECONDS: "30"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Verify image provenance
+        run: |
+          for img in motorsport-api motorsport-anomaly; do
+            gh attestation verify "oci://${IMAGE_REGISTRY}/${img}:${GITHUB_SHA}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/pipeline.yml"
+          done
 
       - name: Preflight
         run: |
