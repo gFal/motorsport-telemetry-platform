@@ -3,6 +3,7 @@
 Each test deliberately disrupts the running platform. The fixtures in this module restore the baseline state afterwards, whether the test passes or fails.
 """
 import base64
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -24,14 +25,24 @@ def restore_baseline(settings, cluster, api):
 
 @pytest.fixture
 def broken_db_credentials(settings, cluster):
-    """Replace the database password in the Secret with an invalid value.
+    """Point the API at a copy of the database Secret that holds an invalid password.
 
-    On teardown the original value is restored and the API Deployment is restarted, so its pods reconnect with valid credentials.
+    The managed Secret is never modified: in production it is owned by External Secrets Operator and re-synchronised from Key Vault. 
+    The Deployment's reference is restored and the copy deleted on teardown.
+
+    Yields:
+        The time immediately before the reference swap started the rollout.
     """
-    original = cluster.secret_value(settings.postgres_secret, settings.postgres_secret_key)
+    broken = f"{settings.postgres_secret}-chaos"
+    original = cluster.core.read_namespaced_secret(settings.postgres_secret, settings.namespace).data
     wrong = base64.b64encode(b"definitely-wrong").decode()
-    cluster.set_secret_value(settings.postgres_secret, settings.postgres_secret_key, wrong)
-    yield
-    cluster.set_secret_value(settings.postgres_secret, settings.postgres_secret_key, original)
-    cluster.restart(settings.api_deployment)
-    cluster.wait_rolled_out(settings.api_deployment, timeout=240)
+    cluster.create_or_replace_secret(broken, {**original, settings.postgres_secret_key: wrong})
+
+    since = datetime.now(timezone.utc) - timedelta(seconds=2)
+    cluster.swap_secret_ref(settings.api_deployment, settings.postgres_secret, broken)  # rollout starts
+    try:
+        yield since
+    finally:
+        cluster.swap_secret_ref(settings.api_deployment, broken, settings.postgres_secret)
+        cluster.wait_rolled_out(settings.api_deployment, timeout=240)
+        cluster.delete_secret(broken)
