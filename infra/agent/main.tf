@@ -66,7 +66,7 @@ resource "azurerm_network_security_group" "agent" {
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Udp"
-    source_port_range          = "*"
+    source_port_range          = "var.ssh_allowed_cidr"
     destination_port_range     = "41641"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
