@@ -30,5 +30,5 @@ variable "admin_ssh_public_key" {
 variable "ssh_allowed_cidr" {
   description = "Public IP of the Ubuntu server (x.x.x.x/32): the only source allowed to reach the agent, for SSH and Tailscale's direct WireGuard path."
   type        = string
-  sensitive   = true 
+  sensitive   = true
 }
