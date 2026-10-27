@@ -28,7 +28,7 @@ variable "admin_ssh_public_key" {
 }
 
 variable "ssh_allowed_cidr" {
-  description = "Source CIDR allowed to SSH to the agent, e.g. home IP as x.x.x.x/32."
+  description = "Public IP of the Ubuntu server (x.x.x.x/32): the only source allowed to reach the agent, for SSH and Tailscale's direct WireGuard path."
   type        = string
-  sensitive   = true # keeps home IP out of public PR plan logs
+  sensitive   = true
 }
