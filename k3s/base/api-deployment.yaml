@@ -19,6 +19,10 @@ spec:
       labels:
         app: motorsport-api
     spec:
+      securityContext:                       
+        runAsNonRoot: true                   
+        seccompProfile:                      
+          type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -38,6 +42,14 @@ spec:
                 name: postgres-config
             - secretRef:
                 name: postgres-secret
+          securityContext:                  
+            allowPrivilegeEscalation: false  
+            readOnlyRootFilesystem: true     
+            capabilities:                    
+              drop: ["ALL"]                  
+          volumeMounts:                      
+            - name: tmp                      
+              mountPath: /tmp 
           resources:
             requests:
               cpu: 100m
@@ -57,3 +69,6 @@ spec:
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 20
+      volumes:                               
+        - name: tmp                          
+          emptyDir: {}

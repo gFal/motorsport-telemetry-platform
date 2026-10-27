@@ -16,6 +16,10 @@ spec:
       labels:
         app: motorsport-anomaly
     spec:
+      securityContext:                       
+        runAsNonRoot: true                   
+        seccompProfile:                      
+          type: RuntimeDefault 
       containers:
         - name: anomaly
           image: ghcr.io/gfal/motorsport-anomaly:unset
@@ -24,6 +28,17 @@ spec:
                 name: postgres-config
             - secretRef:
                 name: postgres-secret
+          env:                               
+            - name: ALERTS_LOG_PATH          
+              value: /tmp/alerts.log         
+          securityContext:                   
+            allowPrivilegeEscalation: false  
+            readOnlyRootFilesystem: true     
+            capabilities:                    
+              drop: ["ALL"]
+          volumeMounts:                      
+            - name: tmp                      
+              mountPath: /tmp
           resources:
             requests:
               cpu: 50m
@@ -31,3 +46,6 @@ spec:
             limits:
               cpu: 100m
               memory: 128Mi
+      volumes:                               
+        - name: tmp                          
+          emptyDir: {}                        
