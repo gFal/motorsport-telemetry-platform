@@ -4,6 +4,9 @@ services:
     env_file: .env
     volumes:
       - pgdata:/var/lib/postgresql
+      # Schema and seed data, shared with the Kubernetes manifests. Runs only on an empty volume.
+      - ./k3s/base/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./k3s/base/db/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
     ports:
       - "5432:5432"  
     healthcheck:
@@ -15,7 +18,7 @@ services:
     restart: unless-stopped
 
   api:
-    build: ./api
+    build: ./services/api
     env_file: .env
     environment:
       DB_HOST: postgres
@@ -33,7 +36,7 @@ services:
     restart: unless-stopped
 
   anomaly:
-    build: ./anomaly_service
+    build: ./services/anomaly
     env_file: .env
     environment:
       DB_HOST: postgres

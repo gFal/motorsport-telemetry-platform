@@ -7,11 +7,11 @@ updates:
       actions: { patterns: ["*"] }
 
   - package-ecosystem: pip
-    directories: ["/api", "/anomaly_service", "/tests/e2e", "/"]
+    directories: ["/services/api", "/services/anomaly", "/tests/e2e", "/"]
     schedule: { interval: weekly }
     groups:
       python: { patterns: ["*"] }
 
   - package-ecosystem: docker
-    directories: ["/api", "/anomaly_service"]
+    directories: ["/services/api", "/services/anomaly"]
     schedule: { interval: weekly }

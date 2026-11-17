@@ -4,8 +4,8 @@
 # down: drop k3s node object --> terraform destroy (VM + networking only, the rg and the Terraform state storage are not managed by Terraform)
 set -euo pipefail
 
-TF_DIR="$HOME/motorsport/infra/agent"
-ANSIBLE_DIR="$HOME/motorsport/ansible"
+TF_DIR="$HOME/motorsport/infra/terraform/agent"
+ANSIBLE_DIR="$HOME/motorsport/infra/ansible"
 TF_OUTPUT_IP="agent_public_ip"          
 AZURE_SSH_USER="azureuser"
 AZURE_SSH_KEY="$HOME/.ssh/azure_motorsport"

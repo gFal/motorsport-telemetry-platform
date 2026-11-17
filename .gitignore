@@ -4,7 +4,7 @@
 !.env.example
 
 # SSH private keys
-terraform/azure_motorsport
+azure_motorsport
 *.pem
 id_rsa
 id_ed25519
@@ -33,7 +33,10 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
-.venv*/.deploy.*/
+.venv*/
+
+# Temporary overlays created by scripts/deploy.sh
+.deploy.*/
 
 # Logs
 *.log
