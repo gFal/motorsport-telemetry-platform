@@ -1,12 +1,9 @@
 # Motorsport Telemetry Platform
 
 [![motorsport-pipeline](https://github.com/gFal/motorsport-telemetry-platform/actions/workflows/pipeline.yml/badge.svg?branch=main)](https://github.com/gFal/motorsport-telemetry-platform/actions/workflows/pipeline.yml)
-[![resilience](https://github.com/gFal/motorsport-telemetry-platform/actions/workflows/resilience.yml/badge.svg)](https://github.com/gFal/motorsport-telemetry-platform/actions/workflows/resilience.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 A production-style platform that ingests live race-car sensor data, stores it in PostgreSQL and raises alerts when a car goes silent or a reading leaves its safe range. It runs on a hybrid **k3s** cluster (an on-premises Ubuntu server plus an on-demand Azure node), provisioned with **Terraform** and **Ansible** and delivered through a **GitHub Actions** pipeline with image scanning, signed provenance, automatic rollback and chaos testing.
-
-It is a self-directed DevOps / Production Operations project. The application is deliberately small, so the focus stays on how it is built, shipped, secured and kept running.
 
 ## Highlights
 
@@ -203,7 +200,6 @@ Cluster deployment needs the Azure, Tailscale and GitHub setup described in [doc
 - [x] Hybrid k3s cluster with Terraform and Ansible
 - [x] CI/CD with scanning, provenance, automatic rollback and chaos testing
 - [ ] Observability: Grafana Alloy collecting logs (Loki) and Postgres metrics (Prometheus), kube-prometheus-stack, Grafana dashboards for race data
-- [ ] Publish the telemetry simulator in this repository
 - [ ] Event streaming with Kafka
 
 ## License
