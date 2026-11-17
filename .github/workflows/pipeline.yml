@@ -19,7 +19,7 @@ permissions:
 
 env:
   TF_VERSION: "1.16.1"          
-  TF_DIR: infra/agent
+  TF_DIR: infra/terraform/agent
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
   IMAGE_REGISTRY: ghcr.io/gfal
@@ -52,7 +52,7 @@ jobs:
 
       - name: terraform validate 
         run: |
-          for d in infra/bootstrap infra/platform infra/agent; do
+          for d in infra/terraform/bootstrap infra/terraform/platform infra/terraform/agent; do
             echo "== $d"
             terraform -chdir="$d" init -backend=false
             terraform -chdir="$d" validate
@@ -87,10 +87,10 @@ jobs:
       - name: ansible-lint
         run: |
           pip install --quiet ansible-lint
-          if [ -f ansible/requirements.yml ]; then
-            ansible-galaxy collection install -r ansible/requirements.yml
+          if [ -f infra/ansible/requirements.yml ]; then
+            ansible-galaxy collection install -r infra/ansible/requirements.yml
           fi
-          ansible-lint ansible/
+          ansible-lint infra/ansible/
 
       - name: Render Kustomize overlays
         run: |
@@ -122,7 +122,7 @@ jobs:
     strategy:
       fail-fast: false                     # report results for every service
       matrix:                              # matrix running the same job for both values
-        service: [api, anomaly_service]
+        service: [api, anomaly]
     env:                                   # dummy config for modules that read env vars at import time, never used to connect
       DB_HOST: localhost
       DB_PORT: "5432"
@@ -137,15 +137,15 @@ jobs:
           python-version: "3.14"  
           cache: pip
           cache-dependency-path: |
-            ${{ matrix.service }}/requirements.txt
+            services/${{ matrix.service }}/requirements.txt
             requirements-test.txt
 
       - name: Install dependencies
-        run: pip install -r "${{ matrix.service }}/requirements.txt" -r requirements-test.txt
+        run: pip install -r "services/${{ matrix.service }}/requirements.txt" -r requirements-test.txt
 
       - name: pytest
-        working-directory: ${{ matrix.service }}
-        run: python -m pytest tests -v --junitxml="../reports/unit-${{ matrix.service }}.xml"
+        working-directory: services/${{ matrix.service }}
+        run: python -m pytest tests -v --junitxml="${{ github.workspace }}/reports/unit-${{ matrix.service }}.xml"
 
       - name: Upload report
         if: always()
@@ -169,7 +169,7 @@ jobs:
         include:
           - service: api
             image: motorsport-api
-          - service: anomaly_service
+          - service: anomaly
             image: motorsport-anomaly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -179,7 +179,7 @@ jobs:
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ${{ matrix.service }}
+          context: services/${{ matrix.service }}
           load: true  # load into the local Docker engine for scanning; never pushed from a pull request
           push: false
           tags: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:ci
@@ -345,7 +345,7 @@ jobs:
         include:
           - service: api
             image: motorsport-api
-          - service: anomaly_service
+          - service: anomaly
             image: motorsport-anomaly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -363,7 +363,7 @@ jobs:
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ${{ matrix.service }}
+          context: services/${{ matrix.service }}
           push: true
           tags: ${{ env.IMAGE_REGISTRY }}/${{ matrix.image }}:${{ github.sha }}
           labels: |
@@ -417,7 +417,7 @@ jobs:
         run: |
           if ! terraform -chdir="$TF_DIR" state list | grep -qxF "$AGENT_VM_ADDRESS"; then
             echo "::error::$AGENT_VM_ADDRESS is not in state - the agent is DOWN."
-            echo "::error::CI never creates the agent. Run agent-lifecycle.sh up on the server."
+            echo "::error::CI never creates the agent. Run infra/scripts/agent-lifecycle.sh up on the server."
             exit 1
           fi
 

@@ -1,4 +1,4 @@
-""" Unit tests for anomaly_service/rules.py: thresholds, silence detection and alert de-duplication. """
+""" Unit tests for services/anomaly/rules.py: thresholds, silence detection and alert de-duplication. """
 from datetime import datetime, timedelta, timezone
 
 import pytest

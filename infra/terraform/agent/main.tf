@@ -16,7 +16,7 @@ provider "azurerm" {
 }
 
 # Created once, by hand, and never managed by Terraform. Also holds the tf state storage account, 
-# so terraform destroy must never be able to destroy it through agent-lifecycle.sh down.
+# so terraform destroy must never be able to destroy it through infra/scripts/agent-lifecycle.sh down.
 data "azurerm_resource_group" "motorsport" {
   name = var.resource_group_name
 }
