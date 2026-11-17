@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (git-ignored). infra/scripts/agent-lifecycle.sh keeps
+# ssh_allowed_cidr up to date and mirrors this file into the TFVARS CI secret.
+
+admin_ssh_public_key = "ssh-ed25519 AAAA... azure_motorsport"
+ssh_allowed_cidr     = "203.0.113.10/32"
+
+# Optional overrides (defaults shown)
+# resource_group_name = "motorsport"
+# vm_name             = "motorsport-agent"
+# vm_size             = "Standard_B2ats_v2"
+# admin_username      = "azureuser"
