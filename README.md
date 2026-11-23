@@ -121,6 +121,10 @@ Each alert fires once on the transition into the bad state, not on every poll. B
 
 ## CI/CD
 
+<p align="center">
+  <img src="docs/images/motorsport-cicd-pipeline.gif" alt="CI/CD Pipeline" width="900">
+</p>
+
 | Trigger | What runs |
 |---|---|
 | Pull request to `main` | `terraform fmt`/`validate`/`plan` (read-only identity), `ansible-lint`, Kustomize render + `kubeconform`, unit tests per service, image build + Trivy gate on fixable HIGH/CRITICAL findings, then an **integration** job that deploys the PR's images to an ephemeral k3d cluster and runs the smoke and chaos suites |
