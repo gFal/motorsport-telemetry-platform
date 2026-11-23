@@ -133,3 +133,20 @@ terraform -chdir=infra/terraform/platform output eso_client_secret_expires
 terraform -chdir=infra/terraform/platform apply -var "key_vault_name=<name>"
 # then re-create azure-kv-credentials as in step 4 of the one-time setup
 ```
+
+## Known issues
+
+### Linux kernel 7.0.0-43 hangs PostgreSQL (Nov 2026)
+
+On kernel 7.0.0-43 the Postgres container never becomes ready: first `gosu` livelocks, and
+with `gosu` bypassed (`runAsUser: 999`) Postgres hangs at the end-of-recovery checkpoint.
+Both start normally on 7.0.0-38.
+
+The server is pinned to 7.0.0-38:
+
+    sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux 7.0.0-38-generic"
+    sudo apt-mark manual $(dpkg -l 'linux-*7.0.0-38*' | awk '/^ii/{print $2}')
+
+To try a newer kernel: `sudo grub-reboot "<entry>" && sudo reboot`, confirm Postgres becomes
+ready, then make it the default with `grub-set-default` and release the old kernel with
+`apt-mark auto`.
