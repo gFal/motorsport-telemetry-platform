@@ -30,6 +30,12 @@ spec:
       labels:
         app: postgres
     spec:
+      # Start as the image's postgres user (UID/GID 999, owner of the data files).
+      # The entrypoint then skips gosu, which livelocks on kernel specific version.
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        runAsNonRoot: true
       nodeSelector:
         kubernetes.io/hostname: ubuntu
       containers:
